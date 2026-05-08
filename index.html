@@ -123,7 +123,7 @@
                 if (aviso.estado === 'pendiente' && aviso.lista[aviso.actual] == miPuesto) {
                     if (!sessionStorage.getItem(hijo.key)) {
                         sessionStorage.setItem(hijo.key, 'notificado');
-                        log(`🔔 RECIBIDO: Aviso urgente del Puesto ${aviso.emisor}.`);
+                        log(`🔔 RECIBIDO: Aviso del Puesto ${aviso.emisor}.`);
                         lanzarNotificacion(aviso.emisor, hijo.key);
                     }
                 }
