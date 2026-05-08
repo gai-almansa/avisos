@@ -5,22 +5,12 @@
     <title>Avisos</title>
     <style>
         body { font-family: sans-serif; padding: 20px; max-width: 400px; margin: auto; background: #f4f4f4; }
-        
-        /* ESTILO PARA EL LOGO */
-        .logo { 
-            display: block; 
-            margin: 0 auto 20px auto; 
-            max-width: 180px; 
-            height: auto; 
-        }
-
-        .caja { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         input, button { width: 100%; padding: 10px; margin: 5px 0; box-sizing: border-box; }
         button { background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
-        button:hover { background: #0056b3; }
-        .oculto { display: none; }
         #log { margin-top: 15px; font-size: 13px; color: #444; border-top: 1px solid #ccc; padding-top: 10px; }
-        
+        .caja { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .oculto { display: none; }
+        .logo { display: block; margin: 0 auto 20px auto; max-width: 180px; height: auto; }
         .grid { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 5px; margin-bottom: 15px; }
         .badge { background: #28a745; color: white; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; }
         .etiqueta { font-size: 14px; font-weight: bold; color: #555; display: block; margin-top: 15px; }
@@ -36,7 +26,7 @@
     <h2>Entrar</h2>
     <input type="number" id="puesto" placeholder="Nº de Puesto (Ej: 1)">
     <input type="password" id="pass" placeholder="Contraseña">
-    <button id="btn-entrar">Conectar</button>
+    <button onclick="entrar()">Conectar</button>
 </div>
 
 <!-- APLICACIÓN -->
@@ -48,7 +38,7 @@
     
     <label class="etiqueta">Destinatarios del aviso:</label>
     <input type="text" id="destinos" placeholder="Ej: 2, 3 o 2.3">
-    <button id="btn-enviar">ENVIAR AVISO</button>
+    <button onclick="enviar()">ENVIAR AVISO</button>
     
     <div id="log"></div>
 </div>
@@ -57,7 +47,6 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
     import { getDatabase, ref, set, onValue, onDisconnect, push, update, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
-    // 1. CONFIGURACIÓN FIREBASE
     const firebaseConfig = {
       apiKey: "AIzaSyBqZuHzHsbDi_EQpCAbkhSNEaf-AFOuGkg",
       authDomain: "gai-almansa-avisos.firebaseapp.com",
@@ -70,29 +59,33 @@
 
     const db = getDatabase(initializeApp(firebaseConfig));
 
+    // Variables
     let miPuesto, miPass;
     const $ = (id) => document.getElementById(id);
     const log = (msg) => $('log').innerHTML = `[${new Date().toLocaleTimeString()}] ${msg} <br>` + $('log').innerHTML;
 
-    // Recuperar memoria
+    // Datos almacenados
     if (localStorage.getItem('ultimo_puesto')) $('puesto').value = localStorage.getItem('ultimo_puesto');
     if (localStorage.getItem('ultimos_destinos')) $('destinos').value = localStorage.getItem('ultimos_destinos');
 
-    // 2. FUNCIÓN ENTRAR
-    const entrar = async () => {
+    // Entrar
+    window.entrar = async () => {
         miPuesto = $('puesto').value;
         miPass = $('pass').value;
         if (!miPuesto || !miPass) return alert("Faltan datos");
 
-        sessionStorage.clear();
+        sessionStorage.clear(); // Limpiamos la memoria de la sesión anterior
 
         try {
             const miRef = ref(db, `conectados/puesto_${miPuesto}`);
             await set(miRef, { online: true, auth: miPass }); 
             onDisconnect(miRef).remove(); 
 
-            push(ref(db, 'log_sesiones'), { puesto: miPuesto, evento: "Conexión", timestamp: serverTimestamp(), auth: miPass });
-            onDisconnect(push(ref(db, 'log_sesiones'))).set({ puesto: miPuesto, evento: "Desconexión", timestamp: serverTimestamp(), auth: miPass });
+            const refEntrada = push(ref(db, 'log_sesiones'));
+            set(refEntrada, { puesto: miPuesto, evento: "Conexión", timestamp: serverTimestamp(), auth: miPass });
+
+            const refSalida = push(ref(db, 'log_sesiones'));
+            onDisconnect(refSalida).set({ puesto: miPuesto, evento: "Desconexión", timestamp: serverTimestamp(), auth: miPass });
 
             localStorage.setItem('ultimo_puesto', miPuesto);
 
@@ -104,11 +97,11 @@
             log(`🟢 Has iniciado sesión en el Puesto ${miPuesto}`);
             iniciarEscuchas();
         } catch(e) {
-            alert("Error de conexión");
+            alert("Contraseña incorrecta");
         }
     };
 
-    // 3. ESCUCHAS
+    // Escuchar la red
     function iniciarEscuchas() {
         onValue(ref(db, 'conectados'), (snap) => {
             let html = "";
@@ -120,11 +113,13 @@
         });
 
         let primeraCarga = true; 
+
         onValue(ref(db, 'avisos'), (snap) => {
             snap.forEach(hijo => {
                 const aviso = hijo.val();
                 if (!aviso || !aviso.lista) return;
 
+                // A) ME TOCA RECIBIRLO A MÍ
                 if (aviso.estado === 'pendiente' && aviso.lista[aviso.actual] == miPuesto) {
                     if (!sessionStorage.getItem(hijo.key)) {
                         sessionStorage.setItem(hijo.key, 'notificado');
@@ -132,13 +127,36 @@
                         lanzarNotificacion(aviso.emisor, hijo.key);
                     }
                 }
+
+                // B) SE ME PASÓ EL TURNO
+                if (sessionStorage.getItem(hijo.key) === 'notificado') {
+                    if (aviso.estado !== 'pendiente' || aviso.lista[aviso.actual] != miPuesto) {
+                        if (!sessionStorage.getItem('fin_'+hijo.key)) {
+                            sessionStorage.setItem('fin_'+hijo.key, 'true');
+                            if (aviso.estado !== `aceptado_${miPuesto}` && !primeraCarga) {
+                                log(`⏭️ TIEMPO AGOTADO: El aviso del Puesto ${aviso.emisor} ha pasado al siguiente o finalizado.`);
+                            }
+                        }
+                    }
+                }
+
+                // C) YO SOY EL EMISOR Y ALGUIEN LO HA ACEPTADO
+                if (aviso.emisor == miPuesto && aviso.estado.includes('aceptado_')) {
+                    if (!sessionStorage.getItem('log_'+hijo.key)) {
+                        sessionStorage.setItem('log_'+hijo.key, 'ok');
+                        if (!primeraCarga) {
+                            log(`✅ Puesto ${aviso.estado.split('_')[1]} aceptó tu aviso.`);
+                        }
+                    }
+                }
             });
+            
             primeraCarga = false; 
         });
     }
 
-    // 4. ENVIAR
-    const enviar = () => {
+    // Enviar aviso
+    window.enviar = () => {
         const dests = $('destinos').value.split(/[.,]/).map(s => s.trim()).filter(Boolean);
         if (!dests.length) return alert("Pon destinatarios");
 
@@ -149,42 +167,44 @@
         cascada(nuevoAviso.key, dests, 0);
     };
 
-    // 5. CASCADA
+    // Cascada de avisos
     function cascada(id, lista, indice) {
         log(`📤 Enviando a Puesto ${lista[indice]}...`);
+        
         setTimeout(async () => {
             const snap = await get(ref(db, `avisos/${id}`));
             const aviso = snap.val();
+            
             if (aviso && aviso.estado === 'pendiente' && aviso.actual === indice) {
                 if (indice + 1 < lista.length) {
                     update(ref(db, `avisos/${id}`), { actual: indice + 1, auth: miPass });
                     cascada(id, lista, indice + 1);
                 } else {
                     update(ref(db, `avisos/${id}`), { estado: 'caducado', auth: miPass });
-                    log("❌ FIN: Nadie ha respondido.");
+                    log("❌ FIN: Nadie ha respondido a tu aviso.");
                 }
             }
         }, 12000); 
     }
 
-    // 6. NOTIFICACIÓN
+    // Lanzar notificación
     function lanzarNotificacion(emisor, idAviso) {
         const n = new Notification(`AVISO DE PUESTO ${emisor}`, { 
             body: "Haz clic para aceptar",
-            requireInteraction: true 
+            requireInteraction: true
         });
+        
         n.onclick = () => {
             update(ref(db, `avisos/${idAviso}`), { estado: `aceptado_${miPuesto}`, auth: miPass });
-            log(`✅ ACEPTADO: Has confirmado el aviso.`);
+            log(`✅ ACEPTADO: Has confirmado el aviso del Puesto ${emisor}.`);
             n.close();
         };
-        setTimeout(() => n.close(), 12000);
+
+        // Cerramos la notificación sola si se pasan los 12 segundos
+        setTimeout(() => {
+            n.close();
+        }, 12000);
     }
-
-    // 7. ASIGNAR EVENTOS (SOLUCIÓN PARA EDGE/FIREFOX)
-    $('btn-entrar').addEventListener('click', entrar);
-    $('btn-enviar').addEventListener('click', enviar);
-
 </script>
 
 </body>
